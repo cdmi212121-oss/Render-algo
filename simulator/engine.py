@@ -113,6 +113,7 @@ class TradingEngine:
         self.last_error: str | None = None
         self.market_open_now: bool = False
         self._squared_off_today = False
+        self._squared_off_date = today_ist()  # see _roll_day_if_needed - _squared_off_today had no daily reset anywhere
         self._position_ticks: dict[str, deque] = {}  # per open position, for scale-out candle detection
         self.order_events: deque = deque(maxlen=100)  # for the UI's order-placed/filled/rejected/cancelled toasts
         self._next_event_id = 1
@@ -274,6 +275,23 @@ class TradingEngine:
     def _tick(self) -> None:
         now_dt = now_ist()
         now = now_dt.time()
+        today = now_dt.date()
+
+        if today != self._squared_off_date:
+            # _squared_off_today previously had NO reset anywhere in the
+            # code - once set True at one day's EOD square-off, it stayed
+            # True forever for every subsequent day the process kept
+            # running without a restart, since _maybe_auto_enter() is
+            # gated by "not self._squared_off_today". Confirmed as the
+            # actual cause of a real zero-trades day (2026-10-01): the
+            # process had been running continuously since before
+            # 2026-09-30's square-off, so the flag was still stuck True the
+            # whole next day - no auto-entry evaluation ever ran at all,
+            # despite spot/option-chain polling working completely
+            # normally (that path doesn't check this flag).
+            self._squared_off_today = False
+            self._squared_off_date = today
+            log.info("New trading day (%s) - square-off flag reset.", today)
 
         # Pure date/time logic - never needed Angel One at all, so it must
         # be computed and kept current regardless of whether the data feed
